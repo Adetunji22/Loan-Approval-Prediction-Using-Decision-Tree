@@ -1,0 +1,210 @@
+---
+title: "LOAN APPROVAL PREDICTION"
+output: html_document
+---
+
+#### Loading necessary packages to be used.
+
+
+```{r warning=FALSE}
+library(tidyverse)
+library(caTools)
+library(janitor)
+library(rpart)
+library(rpart.plot)
+library(caret)
+```
+
+#### Importing the dataset
+
+```{r}
+loan <- read.csv("/kaggle/input/loan-approval-prediction-dataset/loan_approval_dataset.csv")
+
+```
+
+having a look at the first 6 observations of the dataset
+```{r}
+head(loan)
+```
+
+  **DATA PREPARATION**
+
+*checking for missing values*
+
+*checking for any duplicates observations*
+
+*checking if the variables are of correct data types*
+
+*cleaning variable names and ensuring consistency in variable names*
+
+```{r}
+sum(is.na(loan))
+
+sum(duplicated(loan))
+
+str(loan)
+clean_names(loan)
+
+```
+
+The loan approval dataset contains 4269 observations and 13 variables. There are no missing values in the data, likewise no  duplicated observations and the variables are all of correct data types. We can now move further and perform a brief exploratory data analysis.
+
+### EXPLORATORY DATA ANALYSIS (EDA)
+
+*can we find the percentage of graduates to non - graduates? and does the education status of the applicants has an effects on their loan approval?*
+
+```{r}
+education1 <- loan %>% 
+     group_by(education) %>% 
+  count(education) %>%
+  rename(count = n) %>% 
+  mutate(percentage = paste0(round(count/nrow(loan)*100,2),"%"))
+head(education1)
+```
+
+```{r}
+ggplot(data = education1, mapping = aes(x = "", y = count, fill = education))+
+  geom_bar(stat = "identity") +
+  coord_polar(theta = "y", start = 0) +
+  labs(x = NULL, y = NULL)+
+  theme_void() +
+  geom_text(aes(label = percentage),position = position_stack(vjust = 0.5)) +
+  labs(title = "Percentage of Graduates to Non graduates")
+```
+
+
+```{r}
+education2 <- loan %>%
+  filter(loan_status == " Approved") %>%
+  group_by(education) %>% 
+  count()
+head(education2)
+```
+
+with the number of distribution of loan approval among the graduates and non-graduates closed together, shows there is little effect of education status on loan approval.
+By closely examining the distribution of loan approvals among both graduates and non-graduates and observing their proximity, it becomes apparent that the influence of education status on loan approval might be relatively limited. We can further solidify our claim by taking a look at the visualization below.
+
+```{r}
+
+loan %>%
+  group_by(education, loan_status) %>%
+  summarise(count = n()) %>%
+  ggplot(aes(x = education, y = count, fill = loan_status)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Loan Approval by Education Status",
+       x = "Education Status",
+       y = "Count",
+       fill = "Loan Status") +
+  theme_minimal()
+
+```
+
+
+ *How does credit score distribution vary between Loan status? And does creditscore has effects on loan status?*
+ 
+```{r}
+ggplot(data = loan, mapping = aes(x = loan_status, y = cibil_score))+
+  geom_boxplot()+
+  labs(title = "Credit score distribution between loan status")
+```
+
+The boxplot above tells us that applicants with higher credit score tends to get their loan approved, but higher credit score is not the sole criteria of getting thier loans approved as it can be seen from the boxplots that there are applicants with higher credit score but whose loan were rejected. This can be seen below
+```{r}
+ x <- loan %>%
+   select(everything()) %>% 
+   filter(cibil_score > 650 & loan_status == " Rejected")
+x
+```
+
+
+**Finding the correlation between all numerical variables**
+
+*creating a new dataframe containing only the numerical values*
+```{r}
+num_loan <- loan %>% 
+  select(everything(), -(education), -(self_employed),-(loan_status),-(loan_id))
+
+head(num_loan)
+
+```
+
+**Loading the "reshape2" package and finding the correlation**
+```{r}
+library(reshape2)
+cor_loan <- cor(num_loan)
+melted_loan <- melt(cor_loan)
+head(melted_loan)
+
+```
+
+```{r}
+ggplot(data = melted_loan, aes(Var1,Var2, fill = value)) +
+  geom_tile() +
+  theme(axis.text.x = element_text(angle = 90, vjust = .5)) +
+  geom_text(aes(label = round(value,2))) +
+  scale_fill_gradient(low = "purple", high = 'blue')
+
+```
+
+### DATA MODELLING
+
+  **Preparing the data for modelling**
+
+*Performing label encoding on categorical variables(converting categorical variables into binary values)*
+```{r}
+new_loan <- loan %>% 
+  mutate(education = factor(education, levels = c(" Graduate", " Not Graduate"),ordered = TRUE,labels = c(1,0))) %>% 
+  mutate(self_employed = factor(self_employed,levels = c(" No", " Yes"),ordered = TRUE,labels = c(0,1))) %>% 
+  mutate(loan_status = factor(loan_status, levels = c(" Approved", " Rejected"),ordered = TRUE, labels = c(1,0)))
+head(new_loan)
+```
+
+*splitting the data into training and testing dataset*
+```{r}
+set.seed(12)
+sample <- sample.split(new_loan, SplitRatio = 0.8)
+
+train <- subset(new_loan, sample == T)
+
+test <- subset(new_loan, sample == F)
+```
+
+*Building the model using the training dataset*
+```{r}
+model <- rpart(loan_status ~., data = train)
+as.data.frame(model$variable.importance)
+rpart.plot(model)
+
+```
+
+By calculating variable importance, we can see which variables contribute the most to accurate predictions. cibil score having the highest values indicates that it strongly influences the decisions made by the tree. while other variables with low values indicates low influence.
+
+*Making predictions*
+
+```{r}
+prediction <- predict(model,test,type = "class")
+```
+
+*Checking Accuracy with confusion matrix*
+```{r}
+confusionmatrix <- confusionMatrix(prediction,test$loan_status)
+confusionmatrix
+```
+
+The confusion matrix above explains the following
+
+1. True positives(599) : indicates the number of loans that were approved and our model accurately predicted approved.
+
+2. False positives(10) : indicates the number of loans that were rejected that our model inaccurately predicted approved.
+
+3. True negatives(352) : indicates the number of loans that were rejected that our model accurately predicted rejected.
+
+4. False negatives(25) : indicates the number of loans that were approved that our model inaccurately predicted rejected.
+
+ACCURACY(0.9645) : An accuracy of 0.96 means the model accurately predicted the outcome for 96% of the cases.
+
+
+
+
+
+
